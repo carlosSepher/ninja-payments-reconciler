@@ -18,13 +18,14 @@ class WebpayProvider:
         status_url_template: str | None = None,
         api_key_id: str | None = None,
         api_key_secret: str | None = None,
+        commerce_code: str | None = None,
     ) -> None:
         self.status_url_template = status_url_template or os.getenv(
             "WEBPAY_STATUS_URL_TEMPLATE", "https://webpay.transbank.cl/rest/transactions/{token}"
         )
         self.api_key_id = api_key_id or os.getenv("WEBPAY_API_KEY_ID")
         self.api_key_secret = api_key_secret or os.getenv("WEBPAY_API_KEY_SECRET")
-        self.commerce_code = os.getenv("WEBPAY_COMMERCE_CODE")
+        self.commerce_code = commerce_code or os.getenv("WEBPAY_COMMERCE_CODE")
 
     def status(self, token: str) -> tuple[ProviderStatusResult, ProviderCallLog]:
         url = self.status_url_template.format(token=token)

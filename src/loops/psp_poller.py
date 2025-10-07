@@ -28,11 +28,16 @@ class PspPoller:
         self._heartbeat_at: datetime | None = None
 
     async def run(self) -> None:
+        LOGGER.info(f"PSP Poller loop started - providers: {list(self._providers.keys())}")
         while True:
             if not self._settings.reconcile_enabled:
+                LOGGER.debug("Reconciliation is disabled, sleeping...")
                 await asyncio.sleep(self._settings.reconcile_interval_seconds)
                 continue
-            await asyncio.to_thread(self._process_once)
+            try:
+                await asyncio.to_thread(self._process_once)
+            except Exception as exc:
+                LOGGER.exception("Error in PSP poller loop: %s", exc)
             await asyncio.sleep(self._settings.reconcile_interval_seconds)
 
     def _process_once(self) -> None:
@@ -42,18 +47,25 @@ class PspPoller:
             "failed": 0,
             "skipped": 0,
         }
+        LOGGER.debug("PSP Poller: Starting processing cycle")
+
         with self._db.connection() as conn:
             payments = payments_repo.select_payments_for_reconciliation(
                 conn,
                 providers=self._settings.reconcile_polling_providers,
                 batch_size=self._settings.reconcile_batch_size,
             )
+            LOGGER.info(f"PSP Poller: Found {len(payments)} payments to reconcile")
+
             now = datetime.now(timezone.utc)
             for payment in payments:
                 stats["payments"] += 1
                 provider = self._providers.get(payment.provider)
                 if not provider:
-                    LOGGER.warning("No provider client configured for %s", payment.provider)
+                    LOGGER.warning(
+                        f"PSP Poller: No provider client configured for {payment.provider}, "
+                        f"payment_id={payment.id}"
+                    )
                     stats["skipped"] += 1
                     continue
 
@@ -61,6 +73,10 @@ class PspPoller:
                 if attempt_index >= len(self._settings.reconcile_attempt_offsets):
                     payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
                     stats["failed"] += 1
+                    LOGGER.warning(
+                        f"PSP Poller: Attempts exhausted for payment_id={payment.id}, "
+                        f"provider={payment.provider}, attempts={attempt_index}"
+                    )
                     continue
 
                 due_at = payment.created_at + timedelta(
@@ -68,9 +84,20 @@ class PspPoller:
                 )
                 if now < due_at:
                     stats["skipped"] += 1
+                    LOGGER.debug(
+                        f"PSP Poller: Skipping payment_id={payment.id}, "
+                        f"not yet due (due_at={due_at.isoformat()})"
+                    )
                     continue
 
+                LOGGER.debug(
+                    f"PSP Poller: Checking status for payment_id={payment.id}, "
+                    f"provider={payment.provider}, token={payment.token}, "
+                    f"attempt={attempt_index + 1}"
+                )
+
                 result, call_log = provider.status(payment.token)
+
                 payments_repo.record_provider_event(
                     conn,
                     payment_id=payment.id,
@@ -98,13 +125,32 @@ class PspPoller:
                     error_message=call_log.error_message,
                 )
 
+                if call_log.error_message:
+                    LOGGER.error(
+                        f"PSP Poller: ✗ Error checking payment_id={payment.id}, "
+                        f"provider={payment.provider}, error={call_log.error_message}"
+                    )
+
                 if result.mapped_status is None:
                     if attempt_index + 1 >= len(self._settings.reconcile_attempt_offsets):
                         payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
                         stats["failed"] += 1
+                        LOGGER.warning(
+                            f"PSP Poller: No mapped status and attempts exhausted for "
+                            f"payment_id={payment.id}, provider_status={result.provider_status}"
+                        )
+                    else:
+                        LOGGER.debug(
+                            f"PSP Poller: No mapped status yet for payment_id={payment.id}, "
+                            f"will retry later"
+                        )
                     continue
 
                 if result.mapped_status == payment.status:
+                    LOGGER.debug(
+                        f"PSP Poller: No status change for payment_id={payment.id}, "
+                        f"status={payment.status}"
+                    )
                     continue
 
                 status_reason = payment.status_reason
@@ -118,6 +164,11 @@ class PspPoller:
                     status_reason=status_reason,
                 )
                 stats["updated"] += 1
+                LOGGER.info(
+                    f"PSP Poller: ✓ Status updated for payment_id={payment.id}, "
+                    f"provider={payment.provider}, {payment.status} → {result.mapped_status}, "
+                    f"provider_status={result.provider_status}"
+                )
 
                 if result.mapped_status == "AUTHORIZED":
                     payload = build_payload(payment, "PAYMENT_APPROVED")
@@ -127,12 +178,19 @@ class PspPoller:
                         operation="PAYMENT_APPROVED",
                         payload=payload,
                     )
-
+                    LOGGER.info(
+                        f"PSP Poller: Enqueued CRM notification for payment_id={payment.id}, "
+                        f"operation=PAYMENT_APPROVED"
+                    )
 
             cutoff = now - timedelta(minutes=self._settings.abandoned_timeout_minutes)
             abandoned_payments = payments_repo.find_abandoned_payments(
                 conn, cutoff=cutoff, limit=self._settings.reconcile_batch_size
             )
+
+            if abandoned_payments:
+                LOGGER.info(f"PSP Poller: Found {len(abandoned_payments)} abandoned payments")
+
             for abandoned in abandoned_payments:
                 payments_repo.update_payment_status(
                     conn,
@@ -149,8 +207,18 @@ class PspPoller:
                 )
                 stats.setdefault("abandoned", 0)
                 stats["abandoned"] += 1
+                LOGGER.info(
+                    f"PSP Poller: Marked payment_id={abandoned.id} as ABANDONED, "
+                    f"enqueued CRM notification"
+                )
 
             self._emit_runtime_log(conn, stats)
+            LOGGER.info(
+                f"PSP Poller: Cycle completed - "
+                f"payments={stats['payments']}, updated={stats['updated']}, "
+                f"failed={stats['failed']}, skipped={stats['skipped']}, "
+                f"abandoned={stats.get('abandoned', 0)}"
+            )
 
     def _emit_runtime_log(self, conn, stats: Dict[str, int]) -> None:
         now = datetime.now(timezone.utc)
@@ -162,3 +230,4 @@ class PspPoller:
             event_type="HEARTBEAT",
             payload={"psp_poller": stats},
         )
+        LOGGER.debug(f"PSP Poller: Heartbeat recorded - {stats}")

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Sequence
+from typing import Any, List, Sequence
 
 import psycopg2.extras
 
@@ -23,6 +23,24 @@ class Payment:
     attempts: int
 
 
+@dataclass(slots=True)
+class PaymentsMetrics:
+    total_payments: int
+    authorized_payments: int
+    total_amount_minor: int
+    total_amount_currency: str | None
+    last_payment_at: datetime | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_payments": self.total_payments,
+            "authorized_payments": self.authorized_payments,
+            "total_amount_minor": self.total_amount_minor,
+            "total_amount_currency": self.total_amount_currency,
+            "last_payment_at": self.last_payment_at.isoformat() if self.last_payment_at else None,
+        }
+
+
 def select_payments_for_reconciliation(
     conn,
     *,
@@ -32,10 +50,15 @@ def select_payments_for_reconciliation(
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
+            WITH payment_attempts AS (
+                SELECT payment_id, COUNT(*) AS attempts
+                FROM payments.status_check
+                GROUP BY payment_id
+            )
             SELECT
                 p.id,
-                p.status,
-                p.provider,
+                p.status::text,
+                p.provider::text,
                 p.token,
                 p.created_at,
                 p.amount_minor,
@@ -44,19 +67,15 @@ def select_payments_for_reconciliation(
                 p.product_id,
                 p.authorization_code,
                 p.status_reason,
-                COALESCE(sc.attempts, 0) AS attempts
+                COALESCE(pa.attempts, 0) AS attempts
             FROM payments.payment AS p
-            LEFT JOIN (
-                SELECT payment_id, COUNT(*) AS attempts
-                FROM payments.status_check
-                GROUP BY payment_id
-            ) AS sc ON sc.payment_id = p.id
-            WHERE p.status IN ('PENDING', 'TO_CONFIRM')
+            LEFT JOIN payment_attempts pa ON pa.payment_id = p.id
+            WHERE p.status::text IN ('PENDING', 'TO_CONFIRM')
               AND p.token IS NOT NULL
-              AND p.provider = ANY(%s)
+              AND p.provider::text = ANY(%s::text[])
             ORDER BY p.created_at ASC
-            FOR UPDATE SKIP LOCKED
             LIMIT %s
+            FOR UPDATE OF p SKIP LOCKED
             """,
             (list(providers), batch_size),
         )
@@ -136,6 +155,8 @@ def record_provider_event(
     response_body: dict | None,
     error_message: str | None,
     latency_ms: int | None,
+    direction: str = "OUTBOUND",
+    operation: str = "STATUS",
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -143,6 +164,8 @@ def record_provider_event(
             INSERT INTO payments.provider_event_log (
                 payment_id,
                 provider,
+                direction,
+                operation,
                 request_url,
                 request_headers,
                 request_body,
@@ -152,11 +175,13 @@ def record_provider_event(
                 error_message,
                 latency_ms
             )
-            VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s, %s)
+            VALUES (%s, %s::payments.provider_type, %s::payments.direction_type, %s::payments.operation_type, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s, %s)
             """,
             (
                 payment_id,
                 provider,
+                direction,
+                operation,
                 request_url,
                 psycopg2.extras.Json(request_headers),
                 psycopg2.extras.Json(request_body) if request_body is not None else None,
@@ -185,8 +210,7 @@ def update_payment_status(
         timestamp_field = "canceled_at"
     elif new_status == "REFUNDED":
         timestamp_field = "refunded_at"
-    elif new_status == "ABANDONED":
-        timestamp_field = "abandoned_at"
+    # Note: ABANDONED status does not have a dedicated timestamp column
 
     set_clauses = ["status = %s", "updated_at = NOW()"]
     params: List[object] = [new_status]
@@ -218,6 +242,50 @@ def mark_attempts_exhausted(conn, *, payment_id: int) -> None:
     )
 
 
+def get_payments_metrics(conn) -> PaymentsMetrics:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS total_payments,
+                COUNT(*) FILTER (WHERE status::text = 'AUTHORIZED') AS authorized_payments,
+                COALESCE(SUM(amount_minor), 0) AS total_amount_minor,
+                MAX(created_at) AS last_payment_at
+            FROM payments.payment
+            """,
+        )
+        row = cur.fetchone() or {}
+
+    total_payments = int(row.get("total_payments", 0) or 0)
+    authorized_payments = int(row.get("authorized_payments", 0) or 0)
+    total_amount_minor = int(row.get("total_amount_minor", 0) or 0)
+    last_payment_at = row.get("last_payment_at")
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT context ->> 'currency' AS currency
+            FROM payments.payment
+            WHERE context IS NOT NULL
+              AND context ->> 'currency' IS NOT NULL
+            """,
+        )
+        currency_rows = cur.fetchall()
+
+    currencies = [row["currency"] for row in currency_rows if row.get("currency")]
+    total_amount_currency: str | None = None
+    if currencies:
+        total_amount_currency = currencies[0] if len(currencies) == 1 else "MIXED"
+
+    return PaymentsMetrics(
+        total_payments=total_payments,
+        authorized_payments=authorized_payments,
+        total_amount_minor=total_amount_minor,
+        total_amount_currency=total_amount_currency,
+        last_payment_at=last_payment_at,
+    )
+
+
 def find_abandoned_payments(
     conn,
     *,
@@ -229,8 +297,8 @@ def find_abandoned_payments(
             """
             SELECT
                 p.id,
-                p.status,
-                p.provider,
+                p.status::text,
+                p.provider::text,
                 p.token,
                 p.created_at,
                 p.amount_minor,
@@ -241,7 +309,7 @@ def find_abandoned_payments(
                 p.status_reason,
                 0 AS attempts
             FROM payments.payment AS p
-            WHERE p.status = 'PENDING'
+            WHERE p.status::text = 'PENDING'
               AND p.created_at <= %s
             ORDER BY p.created_at ASC
             FOR UPDATE SKIP LOCKED
@@ -275,16 +343,26 @@ def log_service_runtime_event(
     *,
     event_type: str,
     payload: dict | None = None,
+    instance_id: str = "reconciler-1",
 ) -> None:
+    import socket
+    import os
+    
     with conn.cursor() as cur:
         cur.execute(
             """
             INSERT INTO payments.service_runtime_log (
+                instance_id,
+                host_name,
+                process_id,
                 event_type,
                 payload
-            ) VALUES (%s, %s::jsonb)
+            ) VALUES (%s, %s, %s, %s, %s::jsonb)
             """,
             (
+                instance_id,
+                socket.gethostname(),
+                os.getpid(),
                 event_type,
                 psycopg2.extras.Json(payload) if payload is not None else None,
             ),

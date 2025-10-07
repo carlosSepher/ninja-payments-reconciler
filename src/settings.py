@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env",), env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = Field(default="ninja-payments-reconciler", alias="APP_NAME")
+    app_environment: str = Field(default="local", alias="APP_ENVIRONMENT")
+    app_version: str | None = Field(default=None, alias="APP_VERSION")
     database_dsn: str = Field(default="postgresql://localhost/payments", alias="DATABASE_DSN")
 
     reconcile_enabled: bool = Field(default=True, alias="RECONCILE_ENABLED")
@@ -53,7 +55,25 @@ class Settings(BaseSettings):
     )
     crm_log_requests: bool = Field(default=True, alias="CRM_LOG_REQUESTS")
 
+    health_auth_bearer: str | None = Field(default=None, alias="HEALTH_AUTH_BEARER")
+
     heartbeat_interval_seconds: int = Field(default=60, alias="HEARTBEAT_INTERVAL_SECONDS")
+
+    # Provider credentials
+    stripe_api_key: str | None = Field(default=None, alias="STRIPE_API_KEY")
+    stripe_api_base: str = Field(default="https://api.stripe.com", alias="STRIPE_API_BASE")
+    
+    paypal_client_id: str | None = Field(default=None, alias="PAYPAL_CLIENT_ID")
+    paypal_client_secret: str | None = Field(default=None, alias="PAYPAL_CLIENT_SECRET")
+    paypal_base_url: str = Field(default="https://api-m.sandbox.paypal.com", alias="PAYPAL_BASE_URL")
+    
+    webpay_status_url_template: str = Field(
+        default="https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions/{token}",
+        alias="WEBPAY_STATUS_URL_TEMPLATE"
+    )
+    webpay_api_key_id: str | None = Field(default=None, alias="WEBPAY_API_KEY_ID")
+    webpay_api_key_secret: str | None = Field(default=None, alias="WEBPAY_API_KEY_SECRET")
+    webpay_commerce_code: str | None = Field(default=None, alias="WEBPAY_COMMERCE_CODE")
 
     @property
     def reconcile_attempt_offsets(self) -> List[int]:

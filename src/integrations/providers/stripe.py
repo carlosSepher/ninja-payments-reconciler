@@ -13,12 +13,13 @@ from .base import ProviderCallLog, ProviderClient, ProviderStatusResult, mask_se
 class StripeProvider:
     name = "stripe"
 
-    def __init__(self, *, api_key: str | None = None) -> None:
+    def __init__(self, *, api_key: str | None = None, api_base: str | None = None) -> None:
         self.api_key = api_key or os.getenv("STRIPE_API_KEY")
-        self.base_url = os.getenv("STRIPE_API_BASE", "https://api.stripe.com")
+        self.base_url = api_base or os.getenv("STRIPE_API_BASE", "https://api.stripe.com")
 
     def status(self, token: str) -> tuple[ProviderStatusResult, ProviderCallLog]:
-        url = f"{self.base_url}/v1/payment_intents/{token}"
+        target, normalized_token, params = self._resolve_lookup(token)
+        url = self._build_url(target, normalized_token)
         headers: Dict[str, str] = {
             "Content-Type": "application/x-www-form-urlencoded",
         }
@@ -42,9 +43,11 @@ class StripeProvider:
         response_status: int | None = None
         response_headers: Dict[str, Any] | None = None
         response_body: Dict[str, Any] | None = None
+        request_url = url
         try:
             with httpx.Client(timeout=10) as client:
-                resp = client.get(url, auth=(self.api_key, ""), headers=headers)
+                resp = client.get(url, auth=(self.api_key, ""), headers=headers, params=params)
+            request_url = str(resp.request.url)
             response_status = resp.status_code
             response_headers = dict(resp.headers)
             response_body = resp.json()
@@ -57,8 +60,7 @@ class StripeProvider:
         provider_status = None
         mapped_status = None
         if response_body:
-            provider_status = response_body.get("status")
-            mapped_status = self._map_status(provider_status)
+            provider_status, mapped_status = self._extract_status(response_body, target)
 
         result = ProviderStatusResult(
             provider_status=provider_status,
@@ -67,7 +69,7 @@ class StripeProvider:
             payload=response_body,
         )
         log = ProviderCallLog(
-            request_url=url,
+            request_url=request_url,
             request_headers=mask_sensitive_headers({**headers, "Authorization": f"Basic {base64.b64encode(f'{self.api_key}:'.encode()).decode()}"})
             if self.api_key
             else headers,
@@ -93,6 +95,52 @@ class StripeProvider:
             "canceled": "CANCELED",
         }
         return mapping.get(provider_status.lower(), None)
+
+    def _resolve_lookup(self, token: str) -> tuple[str, str, Dict[str, str] | None]:
+        normalized = token.strip()
+        if normalized.startswith("cs_"):
+            return "checkout_session", normalized, {"expand[]": "payment_intent"}
+        if normalized.startswith("pi_") and "_secret_" in normalized:
+            normalized = normalized.split("_secret_", 1)[0]
+        return "payment_intent", normalized, None
+
+    def _build_url(self, target: str, token: str) -> str:
+        if target == "checkout_session":
+            return f"{self.base_url}/v1/checkout/sessions/{token}"
+        return f"{self.base_url}/v1/payment_intents/{token}"
+
+    def _extract_status(
+        self, payload: Dict[str, Any], target: str
+    ) -> tuple[str | None, str | None]:
+        provider_status: str | None = None
+        mapped_status: str | None = None
+
+        if target == "checkout_session":
+            payment_intent = payload.get("payment_intent")
+            if isinstance(payment_intent, dict):
+                provider_status = payment_intent.get("status")
+                mapped_status = self._map_status(provider_status)
+            if mapped_status is None:
+                payment_status = payload.get("payment_status")
+                if isinstance(payment_status, str):
+                    provider_status = payment_status
+                    mapped_status = self._map_checkout_session_status(payment_status)
+        else:
+            provider_status = payload.get("status")
+            mapped_status = self._map_status(provider_status)
+
+        return provider_status, mapped_status
+
+    @staticmethod
+    def _map_checkout_session_status(status: str | None) -> str | None:
+        if status is None:
+            return None
+        mapping = {
+            "paid": "AUTHORIZED",
+            "unpaid": "TO_CONFIRM",
+            "no_payment_required": "AUTHORIZED",
+        }
+        return mapping.get(status.lower(), None)
 
 
 def create() -> ProviderClient:

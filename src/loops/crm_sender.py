@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict
 
@@ -8,6 +9,8 @@ from ..db import Database
 from ..integrations.crm_client import CRMClient
 from ..repositories import crm_repo, payments_repo
 from ..settings import Settings
+
+LOGGER = logging.getLogger(__name__)
 
 
 class CrmSender:
@@ -24,29 +27,46 @@ class CrmSender:
         self._heartbeat_at: datetime | None = None
 
     async def run(self) -> None:
+        LOGGER.info("CRM Sender loop started")
         while True:
             if not self._settings.crm_enabled:
+                LOGGER.debug("CRM integration is disabled, sleeping...")
                 await asyncio.sleep(self._settings.reconcile_interval_seconds)
                 continue
-            await asyncio.to_thread(self._process_once)
+            try:
+                await asyncio.to_thread(self._process_once)
+            except Exception as exc:
+                LOGGER.exception("Error in CRM sender loop: %s", exc)
             await asyncio.sleep(self._settings.reconcile_interval_seconds)
 
     def _process_once(self) -> None:
         stats = {"sent": 0, "failed": 0, "retried": 0}
+        LOGGER.debug("CRM Sender: Starting processing cycle")
+
         with self._db.connection() as conn:
             reactivated = crm_repo.reactivate_failed_items(
                 conn, limit=self._settings.reconcile_batch_size
             )
             if reactivated:
                 stats["retried"] += reactivated
+                LOGGER.info(f"CRM Sender: Reactivated {reactivated} failed items for retry")
+
             queue_items = crm_repo.fetch_pending_crm_items(
                 conn, limit=self._settings.reconcile_batch_size
             )
+            LOGGER.info(f"CRM Sender: Processing {len(queue_items)} pending items")
+
             now = datetime.now(timezone.utc)
             for item in queue_items:
+                LOGGER.debug(
+                    f"CRM Sender: Sending payment_id={item.payment_id}, "
+                    f"operation={item.operation}, attempt={item.attempts + 1}"
+                )
+
                 response, req_headers, req_body, resp_headers, resp_body, error_message = self._client.send(
                     item.payload
                 )
+
                 crm_repo.record_crm_event(
                     conn,
                     payment_id=item.payment_id,
@@ -69,6 +89,11 @@ class CrmSender:
                         crm_id=response.crm_id,
                     )
                     stats["sent"] += 1
+                    LOGGER.info(
+                        f"CRM Sender: ✓ Successfully sent payment_id={item.payment_id}, "
+                        f"operation={item.operation}, status={response.status_code}, "
+                        f"crm_id={response.crm_id}"
+                    )
                 else:
                     attempts = item.attempts + 1
                     backoff_index = min(attempts - 1, len(self._settings.crm_retry_backoff) - 1)
@@ -84,7 +109,18 @@ class CrmSender:
                         error_message=error_message or "CRM send failed",
                     )
                     stats["failed"] += 1
+                    LOGGER.warning(
+                        f"CRM Sender: ✗ Failed to send payment_id={item.payment_id}, "
+                        f"operation={item.operation}, status={response.status_code}, "
+                        f"attempts={attempts}, next_retry={next_attempt.isoformat()}, "
+                        f"error={error_message}"
+                    )
+
             self._emit_runtime_log(conn, stats)
+            LOGGER.info(
+                f"CRM Sender: Cycle completed - "
+                f"sent={stats['sent']}, failed={stats['failed']}, retried={stats['retried']}"
+            )
 
     def _emit_runtime_log(self, conn, stats: Dict[str, int]) -> None:
         now = datetime.now(timezone.utc)
@@ -96,3 +132,4 @@ class CrmSender:
             event_type="HEARTBEAT",
             payload={"crm_sender": stats},
         )
+        LOGGER.debug(f"CRM Sender: Heartbeat recorded - {stats}")

@@ -318,12 +318,16 @@ def find_abandoned_payments(
                 p.product_id,
                 p.authorization_code,
                 p.status_reason,
-                0 AS attempts
+                0 AS attempts,
+                po.id AS payment_order_id,
+                po.customer_rut AS order_customer_rut
             FROM payments.payment AS p
+            LEFT JOIN payments.payment_order AS po
+              ON po.id = p.payment_order_id
             WHERE p.status::text = 'PENDING'
               AND p.created_at <= %s
             ORDER BY p.created_at ASC
-            FOR UPDATE SKIP LOCKED
+            FOR UPDATE OF p SKIP LOCKED
             LIMIT %s
             """,
             (cutoff, limit),
@@ -344,6 +348,8 @@ def find_abandoned_payments(
             authorization_code=row.get("authorization_code"),
             status_reason=row.get("status_reason"),
             attempts=row.get("attempts", 0),
+            payment_order_id=row.get("payment_order_id"),
+            order_customer_rut=row.get("order_customer_rut"),
         )
         for row in rows
     ]

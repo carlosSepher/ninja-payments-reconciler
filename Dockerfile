@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV APP_PORT=8200
-EXPOSE 8200
+ENV APP_PORT=8300
+EXPOSE 8300
 
-CMD ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--port", "8200"]
+CMD ["/bin/sh", "-c", "uvicorn src.app:app --host 0.0.0.0 --port ${APP_PORT:-8300}"]

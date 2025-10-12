@@ -9,7 +9,7 @@ from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Security, status
 from fastapi.openapi.docs import (
     get_swagger_ui_html,
     get_swagger_ui_oauth2_redirect_html,
@@ -256,10 +256,24 @@ def create_app() -> FastAPI:
 
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui(
+        request: Request,
         _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
     ):
+        forwarded_prefix = request.headers.get("x-forwarded-prefix") or ""
+        root_path = request.scope.get("root_path", "")
+        base_path = forwarded_prefix or root_path
+        base_path = base_path.rstrip("/")
+        if base_path and not base_path.startswith("/"):
+            base_path = f"/{base_path}"
+
+        openapi_url = f"{base_path}/openapi.json" if base_path else "/openapi.json"
+        oauth_redirect_url = (
+            f"{base_path}/docs/oauth2-redirect" if base_path else "/docs/oauth2-redirect"
+        )
+
         return get_swagger_ui_html(
-            openapi_url="/openapi.json",
+            openapi_url=openapi_url,
+            oauth2_redirect_url=oauth_redirect_url,
             title=f"{settings.app_name} - Swagger UI",
             swagger_ui_parameters={"persistAuthorization": True},
         )

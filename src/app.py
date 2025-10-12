@@ -248,23 +248,31 @@ def create_app() -> FastAPI:
 
         return response
 
-    @app.get("/openapi.json", include_in_schema=False)
-    async def custom_openapi(
-        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
-    ) -> JSONResponse:
-        return JSONResponse(app.openapi())
-
-    @app.get("/docs", include_in_schema=False)
-    async def custom_swagger_ui(
-        request: Request,
-        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
-    ):
+    def _compute_base_path(request: Request) -> str:
         forwarded_prefix = request.headers.get("x-forwarded-prefix") or ""
         root_path = request.scope.get("root_path", "")
         base_path = forwarded_prefix or root_path
         base_path = base_path.rstrip("/")
         if base_path and not base_path.startswith("/"):
             base_path = f"/{base_path}"
+        return base_path
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def custom_openapi(
+        request: Request,
+        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
+    ) -> JSONResponse:
+        base_path = _compute_base_path(request)
+        schema = app.openapi()
+        schema["servers"] = [{"url": base_path or "/"}]
+        return JSONResponse(schema)
+
+    @app.get("/docs", include_in_schema=False)
+    async def custom_swagger_ui(
+        request: Request,
+        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
+    ):
+        base_path = _compute_base_path(request)
 
         openapi_url = f"{base_path}/openapi.json" if base_path else "/openapi.json"
         oauth_redirect_url = (

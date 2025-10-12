@@ -3,12 +3,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import socket
 from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.openapi.docs import (
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
+from fastapi.responses import JSONResponse
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBasic,
+    HTTPBasicCredentials,
+    HTTPBearer,
+)
 
 from .db import create_database
 from .integrations.crm_client import CRMClient
@@ -20,6 +32,9 @@ from .repositories import payments_repo
 from .settings import get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+_docs_basic_scheme = HTTPBasic()
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def create_app() -> FastAPI:
@@ -70,7 +85,7 @@ def create_app() -> FastAPI:
     )
     LOGGER.info(f"CRM endpoint: {crm_client.endpoint}")
 
-    app = FastAPI(title=settings.app_name)
+    app = FastAPI(title=settings.app_name, docs_url=None, redoc_url=None, openapi_url=None)
 
     app.state.settings = settings
     app.state.providers = providers
@@ -134,25 +149,52 @@ def create_app() -> FastAPI:
             LOGGER.info("Database connection closed")
         
         LOGGER.info("=" * 60)
+        LOGGER.info("=" * 60)
 
-    def _verify_health_auth(request: Request) -> None:
+    def _validate_swagger_credentials(
+        credentials: HTTPBasicCredentials = Depends(_docs_basic_scheme),
+    ) -> HTTPBasicCredentials:
+        expected_user = settings.swagger_basic_username
+        expected_password = settings.swagger_basic_password
+        is_user_valid = secrets.compare_digest(credentials.username, expected_user)
+        is_password_valid = secrets.compare_digest(credentials.password, expected_password)
+        if not (is_user_valid and is_password_valid):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect basic auth credentials",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return credentials
+
+    def _verify_health_auth(
+        credentials: HTTPAuthorizationCredentials | None,
+    ) -> None:
         expected_token = settings.health_auth_bearer
         if not expected_token:
             return
-        authorization = request.headers.get("Authorization")
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-        provided_token = authorization.split(" ", 1)[1].strip()
+        if credentials is None or credentials.scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing bearer token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        provided_token = credentials.credentials.strip()
         if provided_token != expected_token:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid bearer token")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid bearer token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/api/v1/health/metrics")
-    async def health_metrics(request: Request) -> dict[str, Any]:
-        _verify_health_auth(request)
+    async def health_metrics(
+        credentials: HTTPAuthorizationCredentials = Security(_bearer_scheme),
+    ) -> dict[str, Any]:
+        _verify_health_auth(credentials)
 
         now = datetime.now(timezone.utc)
         started_at: datetime | None = app.state.started_at
@@ -205,6 +247,28 @@ def create_app() -> FastAPI:
         }
 
         return response
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def custom_openapi(
+        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
+    ) -> JSONResponse:
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False)
+    async def custom_swagger_ui(
+        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
+    ):
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title=f"{settings.app_name} - Swagger UI",
+            swagger_ui_parameters={"persistAuthorization": True},
+        )
+
+    @app.get("/docs/oauth2-redirect", include_in_schema=False)
+    async def swagger_ui_redirect(
+        _: HTTPBasicCredentials = Depends(_validate_swagger_credentials),
+    ):
+        return get_swagger_ui_oauth2_redirect_html()
 
     return app
 

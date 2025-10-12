@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     )
     crm_log_requests: bool = Field(default=True, alias="CRM_LOG_REQUESTS")
 
+    swagger_basic_username: str = Field(default="ninja", alias="SWAGGER_BASIC_USERNAME")
+    swagger_basic_password: str = Field(default="reconciler", alias="SWAGGER_BASIC_PASSWORD")
+
     health_auth_bearer: str | None = Field(default=None, alias="HEALTH_AUTH_BEARER")
 
     heartbeat_interval_seconds: int = Field(default=60, alias="HEARTBEAT_INTERVAL_SECONDS")

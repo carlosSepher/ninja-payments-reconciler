@@ -158,7 +158,14 @@ cd ninja-payments-reconciler
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
 
+### Swagger UI Access
+
+- Navigate to `http://<host>:8300/docs` and authenticate with basic credentials `ninja / reconciler`.
+- Use the `Authorize` button within Swagger to provide the bearer token required by endpoints such as `/api/v1/health/metrics`.
+
+```bash
 # Prepare database schema
 psql -h <host> -U <user> -d <db> -f scripts/create_tables.sql
 

@@ -18,7 +18,11 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     context = payment.context or {}
     provider_metadata = payment.provider_metadata or {}
 
-    rut = _extract_from_dict(context, "customer_rut") or _extract_from_dict(provider_metadata, "rut")
+    rut = (
+        payment.order_customer_rut
+        or _extract_from_dict(context, "customer_rut")
+        or _extract_from_dict(provider_metadata, "rut")
+    )
     name = (
         _extract_from_dict(context, "customer_name")
         or _extract_from_dict(provider_metadata, "name")

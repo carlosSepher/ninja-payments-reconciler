@@ -21,6 +21,8 @@ class Payment:
     authorization_code: str | None
     status_reason: str | None
     attempts: int
+    payment_order_id: int | None
+    order_customer_rut: str | None
 
 
 @dataclass(slots=True)
@@ -54,6 +56,10 @@ def select_payments_for_reconciliation(
                 SELECT payment_id, COUNT(*) AS attempts
                 FROM payments.status_check
                 GROUP BY payment_id
+            ),
+            payment_orders AS (
+                SELECT po.id, po.customer_rut
+                FROM payments.payment_order AS po
             )
             SELECT
                 p.id,
@@ -67,9 +73,12 @@ def select_payments_for_reconciliation(
                 p.product_id,
                 p.authorization_code,
                 p.status_reason,
-                COALESCE(pa.attempts, 0) AS attempts
+                COALESCE(pa.attempts, 0) AS attempts,
+                po.id AS payment_order_id,
+                po.customer_rut AS order_customer_rut
             FROM payments.payment AS p
             LEFT JOIN payment_attempts pa ON pa.payment_id = p.id
+            LEFT JOIN payment_orders po ON po.id = p.payment_order_id
             WHERE p.status::text IN ('PENDING', 'TO_CONFIRM')
               AND p.token IS NOT NULL
               AND p.provider::text = ANY(%s::text[])
@@ -97,6 +106,8 @@ def select_payments_for_reconciliation(
                 authorization_code=row.get("authorization_code"),
                 status_reason=row.get("status_reason"),
                 attempts=row.get("attempts", 0),
+                payment_order_id=row.get("payment_order_id"),
+                order_customer_rut=row.get("order_customer_rut"),
             )
         )
     return payments

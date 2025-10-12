@@ -200,6 +200,20 @@ uvicorn src.app:app --host 0.0.0.0 --port 8300 --log-level info
 
 Both background loops spawn automatically on startup. Logs are written to stdout.
 
+### Docker Deployment
+
+- Ajusta `REPO_URL` dentro de `scripts/deploy_ec2.sh` o expórtalo antes de ejecutar el script en la EC2.
+- Verifica que Docker esté instalado y que exista la red `pg16_default` con el contenedor de PostgreSQL accesible como `pg16`.
+- Ejecuta `sudo bash scripts/deploy_ec2.sh main` para clonar/pullear el repo, regenerar `.env`, construir la imagen y levantar el contenedor en el puerto `8200`.
+- Nginx puede enrutar `/reconciler/` a `http://127.0.0.1:8200/` según la configuración provista.
+- Revisa logs con `docker logs -f ninja-payments-reconciler` y status con `docker ps`.
+
+### Nginx
+
+- Copia `deploy/nginx.conf` a `/etc/nginx/sites-available/ninja-payments-reconciler.conf` y crea el enlace simbólico en `sites-enabled`.
+- Valida sintaxis con `sudo nginx -t` y recarga con `sudo systemctl reload nginx`.
+- El bloque `/reconciler/` direcciona al contenedor FastAPI en `127.0.0.1:8200`.
+
 ### Stopping the Service
 
 - Send `CTRL+C` or terminate the process. The shutdown handler cancels background tasks and records a `SHUTDOWN` entry in `payments.service_runtime_log`.

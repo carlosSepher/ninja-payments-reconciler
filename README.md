@@ -96,7 +96,7 @@ erDiagram
         varchar status
         varchar provider
         varchar token
-        integer amount_minor
+        numeric(18,2) amount_minor
         jsonb context
         timestamp created_at
         timestamp updated_at
@@ -281,7 +281,7 @@ Response schema:
   "payments": {
     "total_payments": 26,
     "authorized_payments": 11,
-    "total_amount_minor": 316597,
+    "total_amount_minor": 316597.50,
     "total_amount_currency": "MIXED",
     "last_payment_at": "2025-10-06T01:39:13.263489+00:00"
   }

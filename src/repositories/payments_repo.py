@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List, Sequence
 
+from decimal import Decimal
+
 import psycopg2.extras
 
 
@@ -14,7 +16,7 @@ class Payment:
     provider: str
     token: str
     created_at: datetime
-    amount_minor: int
+    amount_minor: Decimal
     provider_metadata: dict | None
     context: dict | None
     product_id: int | None
@@ -29,7 +31,7 @@ class Payment:
 class PaymentsMetrics:
     total_payments: int
     authorized_payments: int
-    total_amount_minor: int
+    total_amount_minor: Decimal
     total_amount_currency: str | None
     last_payment_at: datetime | None
 
@@ -37,7 +39,7 @@ class PaymentsMetrics:
         return {
             "total_payments": self.total_payments,
             "authorized_payments": self.authorized_payments,
-            "total_amount_minor": self.total_amount_minor,
+            "total_amount_minor": float(self.total_amount_minor),
             "total_amount_currency": self.total_amount_currency,
             "last_payment_at": self.last_payment_at.isoformat() if self.last_payment_at else None,
         }
@@ -99,7 +101,7 @@ def select_payments_for_reconciliation(
                 provider=row["provider"],
                 token=row["token"],
                 created_at=row["created_at"],
-                amount_minor=row["amount_minor"],
+                amount_minor=Decimal(row["amount_minor"]),
                 provider_metadata=row.get("provider_metadata"),
                 context=row.get("context"),
                 product_id=row.get("product_id"),
@@ -269,7 +271,10 @@ def get_payments_metrics(conn) -> PaymentsMetrics:
 
     total_payments = int(row.get("total_payments", 0) or 0)
     authorized_payments = int(row.get("authorized_payments", 0) or 0)
-    total_amount_minor = int(row.get("total_amount_minor", 0) or 0)
+    total_amount_value = row.get("total_amount_minor")
+    total_amount_minor = (
+        Decimal("0") if total_amount_value in (None, 0) else Decimal(total_amount_value)
+    )
     last_payment_at = row.get("last_payment_at")
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -341,7 +346,7 @@ def find_abandoned_payments(
             provider=row["provider"],
             token=row["token"],
             created_at=row["created_at"],
-            amount_minor=row["amount_minor"],
+            amount_minor=Decimal(row["amount_minor"]),
             provider_metadata=row.get("provider_metadata"),
             context=row.get("context"),
             product_id=row.get("product_id"),

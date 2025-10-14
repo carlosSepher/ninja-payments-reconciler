@@ -29,7 +29,7 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         or "Pago Ninja"
     )
     transaction_id = payment.authorization_code or payment.token
-    amount_str = str(payment.amount_minor)
+    amount_str = format(payment.amount_minor, ".2f")
     product_id = payment.product_id if isinstance(payment.product_id, int) else None
 
     payload: Dict[str, Any] = {

@@ -14,6 +14,14 @@ def _extract_from_dict(data: Any, *keys: str) -> Any:
     return None
 
 
+def _sanitize_rut(value: Any) -> str | None:
+    if value is None:
+        return None
+    rut = str(value)
+    cleaned = rut.replace(".", "").replace("-", "").strip()
+    return cleaned or None
+
+
 def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     context = payment.context or {}
     provider_metadata = payment.provider_metadata or {}
@@ -23,24 +31,29 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         or _extract_from_dict(context, "customer_rut")
         or _extract_from_dict(provider_metadata, "rut")
     )
+    rut = _sanitize_rut(rut)
+
     name = (
         _extract_from_dict(context, "customer_name")
         or _extract_from_dict(provider_metadata, "name")
-        or "Pago Ninja"
+        or payment.provider
     )
-    transaction_id = payment.authorization_code or payment.token
-    amount_str = format(payment.amount_minor, ".2f")
+    transaction_id = (
+        payment.payment_order_id
+        or payment.authorization_code
+        or payment.token
+        or payment.id
+    )
+    amount_value = float(payment.amount_minor)
     product_id = payment.product_id if isinstance(payment.product_id, int) else None
 
     payload: Dict[str, Any] = {
         "rutDepositante": rut,
         "nombreDepositante": name,
         "paymentMethod": payment.provider,
-        "transactionId": transaction_id,
-        "monto": amount_str,
+        "transactionId": str(transaction_id) if transaction_id is not None else None,
+        "monto": amount_value,
         "listContrato": [product_id] if product_id is not None else [],
         "listCuota": None,
-        "operation": operation,
-        "paymentId": payment.id,
     }
     return payload

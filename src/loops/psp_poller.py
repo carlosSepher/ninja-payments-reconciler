@@ -72,6 +72,15 @@ class PspPoller:
                 attempt_index = payment.attempts
                 if attempt_index >= len(self._settings.reconcile_attempt_offsets):
                     payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
+                    payload = build_payload(payment, "ABANDONED_CART")
+                    crm_repo.enqueue_crm_operation(
+                        conn,
+                        payment_id=payment.id,
+                        operation="ABANDONED_CART",
+                        payload=payload,
+                    )
+                    stats.setdefault("abandoned", 0)
+                    stats["abandoned"] += 1
                     stats["failed"] += 1
                     LOGGER.warning(
                         f"PSP Poller: Attempts exhausted for payment_id={payment.id}, "
@@ -134,6 +143,15 @@ class PspPoller:
                 if result.mapped_status is None:
                     if attempt_index + 1 >= len(self._settings.reconcile_attempt_offsets):
                         payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
+                        payload = build_payload(payment, "ABANDONED_CART")
+                        crm_repo.enqueue_crm_operation(
+                            conn,
+                            payment_id=payment.id,
+                            operation="ABANDONED_CART",
+                            payload=payload,
+                        )
+                        stats.setdefault("abandoned", 0)
+                        stats["abandoned"] += 1
                         stats["failed"] += 1
                         LOGGER.warning(
                             f"PSP Poller: No mapped status and attempts exhausted for "

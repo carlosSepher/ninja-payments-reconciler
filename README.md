@@ -302,6 +302,7 @@ The endpoint downgrades `status` to `degraded` when the database is unavailable 
 - Items in `payments.crm_push_queue` may be in one of three states: `PENDING`, `FAILED`, or `SENT`.
 - Failed items are automatically reactivated once their `next_attempt_at` is past due, with retries scheduled according to `CRM_RETRY_BACKOFF`.
 - Each HTTP interaction against the CRM is logged to `payments.crm_event_log` with full request/response context.
+- The CRM sender loop backfills `PAYMENT_APPROVED` notifications for any payments that are already `AUTHORIZED` even if the reconciler was not involved, and both reconciler-driven and timeout-driven `ABANDONED_CART` events are enqueued for delivery.
 
 ## Development & Testing
 

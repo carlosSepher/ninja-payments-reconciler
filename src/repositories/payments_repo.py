@@ -115,6 +115,69 @@ def select_payments_for_reconciliation(
     return payments
 
 
+def find_authorized_payments_without_crm(
+    conn,
+    *,
+    limit: int = 100,
+) -> List[Payment]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            WITH payment_orders AS (
+                SELECT po.id, po.customer_rut
+                FROM payments.payment_order AS po
+            )
+            SELECT
+                p.id,
+                p.status::text,
+                p.provider::text,
+                p.token,
+                p.created_at,
+                p.amount_minor,
+                p.provider_metadata,
+                p.context,
+                p.product_id,
+                p.authorization_code,
+                p.status_reason,
+                po.id AS payment_order_id,
+                po.customer_rut AS order_customer_rut
+            FROM payments.payment AS p
+            LEFT JOIN payment_orders po ON po.id = p.payment_order_id
+            LEFT JOIN payments.crm_push_queue AS q
+              ON q.payment_id = p.id
+             AND q.operation = 'PAYMENT_APPROVED'
+            WHERE p.status::text = 'AUTHORIZED'
+              AND q.id IS NULL
+            ORDER BY p.created_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+
+    payments: List[Payment] = []
+    for row in rows:
+        payments.append(
+            Payment(
+                id=row["id"],
+                status=row["status"],
+                provider=row["provider"],
+                token=row["token"],
+                created_at=row["created_at"],
+                amount_minor=Decimal(row["amount_minor"]),
+                provider_metadata=row.get("provider_metadata"),
+                context=row.get("context"),
+                product_id=row.get("product_id"),
+                authorization_code=row.get("authorization_code"),
+                status_reason=row.get("status_reason"),
+                attempts=0,
+                payment_order_id=row.get("payment_order_id"),
+                order_customer_rut=row.get("order_customer_rut"),
+            )
+        )
+    return payments
+
+
 def record_status_check(
     conn,
     *,

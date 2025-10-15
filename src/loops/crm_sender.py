@@ -8,6 +8,7 @@ from typing import Dict
 from ..db import Database
 from ..integrations.crm_client import CRMClient
 from ..repositories import crm_repo, payments_repo
+from ..services.crm_payloads import build_payload
 from ..settings import Settings
 
 LOGGER = logging.getLogger(__name__)
@@ -40,10 +41,27 @@ class CrmSender:
             await asyncio.sleep(self._settings.reconcile_interval_seconds)
 
     def _process_once(self) -> None:
-        stats = {"sent": 0, "failed": 0, "retried": 0}
+        stats = {"sent": 0, "failed": 0, "retried": 0, "enqueued_authorized": 0}
         LOGGER.debug("CRM Sender: Starting processing cycle")
 
         with self._db.connection() as conn:
+            authorized_without_queue = payments_repo.find_authorized_payments_without_crm(
+                conn, limit=self._settings.reconcile_batch_size
+            )
+            if authorized_without_queue:
+                for payment in authorized_without_queue:
+                    payload = build_payload(payment, "PAYMENT_APPROVED")
+                    crm_repo.enqueue_crm_operation(
+                        conn,
+                        payment_id=payment.id,
+                        operation="PAYMENT_APPROVED",
+                        payload=payload,
+                    )
+                stats["enqueued_authorized"] = len(authorized_without_queue)
+                LOGGER.info(
+                    f"CRM Sender: Enqueued {stats['enqueued_authorized']} authorized payments"
+                )
+
             reactivated = crm_repo.reactivate_failed_items(
                 conn, limit=self._settings.reconcile_batch_size
             )
@@ -119,7 +137,8 @@ class CrmSender:
             self._emit_runtime_log(conn, stats)
             LOGGER.info(
                 f"CRM Sender: Cycle completed - "
-                f"sent={stats['sent']}, failed={stats['failed']}, retried={stats['retried']}"
+                f"sent={stats['sent']}, failed={stats['failed']}, "
+                f"retried={stats['retried']}, enqueued_authorized={stats['enqueued_authorized']}"
             )
 
     def _emit_runtime_log(self, conn, stats: Dict[str, int]) -> None:

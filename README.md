@@ -293,7 +293,7 @@ The endpoint downgrades `status` to `degraded` when the database is unavailable 
 ## Payment Reconciliation Logic
 
 - Payments eligible for reconciliation are loaded with a `FOR UPDATE SKIP LOCKED` query to safely distribute work across multiple instances.
-- The retry index is derived from the number of entries in `payments.status_check` for the payment; once all offsets are exhausted, the payment transitions to `FAILED` with reason `reconcile attempts exhausted`.
+- The retry index is derived from the number of entries in `payments.status_check` for the payment; once all offsets are exhausted, the payment transitions to `ABANDONED` with reason `reconcile attempts exhausted`.
 - Stripe integration transparently handles checkout session tokens (`cs_...`) and payment intent client secrets by normalizing the identifier before hitting `/v1/payment_intents` or `/v1/checkout/sessions` with the necessary `expand[]` parameter.
 - Every provider call is persisted to `payments.provider_event_log`, including masked headers and timing, to aid debugging.
 

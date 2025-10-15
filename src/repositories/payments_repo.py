@@ -250,7 +250,7 @@ def mark_attempts_exhausted(conn, *, payment_id: int) -> None:
     update_payment_status(
         conn,
         payment_id=payment_id,
-        new_status="FAILED",
+        new_status="ABANDONED",
         status_reason="reconcile attempts exhausted",
     )
 

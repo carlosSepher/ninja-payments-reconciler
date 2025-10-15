@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict
 
 from ..repositories.payments_repo import Payment
@@ -20,6 +21,17 @@ def _sanitize_rut(value: Any) -> str | None:
     rut = str(value)
     cleaned = rut.replace(".", "").replace("-", "").strip()
     return cleaned or None
+
+
+def _truncate_amount_to_str(amount: Any) -> str:
+    if isinstance(amount, Decimal):
+        truncated = int(amount)
+    else:
+        try:
+            truncated = int(Decimal(str(amount)))
+        except (InvalidOperation, ValueError):
+            truncated = 0
+    return str(truncated)
 
 
 def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
@@ -44,16 +56,15 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         or payment.token
         or payment.id
     )
-    amount_value = float(payment.amount_minor)
-    product_id = payment.product_id if isinstance(payment.product_id, int) else None
+    amount_str = _truncate_amount_to_str(payment.amount_minor)
 
     payload: Dict[str, Any] = {
         "rutDepositante": rut,
         "nombreDepositante": name,
         "paymentMethod": payment.provider,
         "transactionId": str(transaction_id) if transaction_id is not None else None,
-        "monto": amount_value,
-        "listContrato": [product_id] if product_id is not None else [],
+        "monto": amount_str,
+        "listContrato": [1],
         "listCuota": None,
     }
     return payload

@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     crm_retry_backoff_raw: str | List[int] | None = Field(
         default=None, alias="CRM_RETRY_BACKOFF"
     )
+    crm_max_attempts: int = Field(default=5, alias="CRM_MAX_ATTEMPTS")
     crm_log_requests: bool = Field(default=True, alias="CRM_LOG_REQUESTS")
 
     swagger_basic_username: str = Field(default="ninja", alias="SWAGGER_BASIC_USERNAME")

@@ -5,6 +5,15 @@ from typing import Any, Dict
 
 from ..repositories.payments_repo import Payment
 
+_AMOUNT_KEYS = (
+    "amount_minor",
+    "amountMinor",
+    "amount",
+    "total_amount",
+    "totalAmount",
+    "total",
+)
+
 
 def _extract_from_dict(data: Any, *keys: str) -> Any:
     if not isinstance(data, dict):
@@ -34,6 +43,43 @@ def _truncate_amount_to_str(amount: Any) -> str:
     return str(truncated)
 
 
+def _is_non_zero_numeric(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        return Decimal(str(value)) != 0
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+
+
+def _find_amount_in_payload(data: Any) -> Any:
+    if isinstance(data, dict):
+        for key in _AMOUNT_KEYS:
+            if key in data and _is_non_zero_numeric(data[key]):
+                return data[key]
+        for value in data.values():
+            found = _find_amount_in_payload(value)
+            if found is not None:
+                return found
+    elif isinstance(data, list):
+        for item in data:
+            found = _find_amount_in_payload(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _resolve_amount(payment: Payment) -> Any:
+    if _is_non_zero_numeric(payment.amount_minor):
+        return payment.amount_minor
+
+    for source in (payment.context, payment.provider_metadata):
+        found = _find_amount_in_payload(source)
+        if found is not None:
+            return found
+    return payment.amount_minor
+
+
 def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     context = payment.context or {}
     provider_metadata = payment.provider_metadata or {}
@@ -56,7 +102,8 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         or payment.token
         or payment.id
     )
-    amount_str = _truncate_amount_to_str(payment.amount_minor)
+    amount_value = _resolve_amount(payment)
+    amount_str = _truncate_amount_to_str(amount_value)
 
     payload: Dict[str, Any] = {
         "rutDepositante": rut,

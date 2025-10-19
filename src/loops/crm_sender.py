@@ -45,6 +45,7 @@ class CrmSender:
         LOGGER.debug("CRM Sender: Starting processing cycle")
 
         with self._db.connection() as conn:
+            max_attempts = self._settings.crm_max_attempts
             authorized_without_queue = payments_repo.find_authorized_payments_without_crm(
                 conn, limit=self._settings.reconcile_batch_size
             )
@@ -63,7 +64,9 @@ class CrmSender:
                 )
 
             reactivated = crm_repo.reactivate_failed_items(
-                conn, limit=self._settings.reconcile_batch_size
+                conn,
+                limit=self._settings.reconcile_batch_size,
+                max_attempts=max_attempts,
             )
             if reactivated:
                 stats["retried"] += reactivated
@@ -85,6 +88,7 @@ class CrmSender:
                     item.payload
                 )
 
+                attempts = item.attempts + 1
                 crm_repo.record_crm_event(
                     conn,
                     payment_id=item.payment_id,
@@ -103,6 +107,7 @@ class CrmSender:
                     crm_repo.update_crm_item_success(
                         conn,
                         item_id=item.id,
+                        attempts=attempts,
                         response_code=response.status_code,
                         crm_id=response.crm_id,
                     )
@@ -113,26 +118,41 @@ class CrmSender:
                         f"crm_id={response.crm_id}"
                     )
                 else:
-                    attempts = item.attempts + 1
-                    backoff_index = min(attempts - 1, len(self._settings.crm_retry_backoff) - 1)
-                    next_attempt = now + timedelta(
-                        seconds=self._settings.crm_retry_backoff[backoff_index]
-                    )
+                    should_retry = attempts < max_attempts
+                    if should_retry:
+                        backoff_index = min(
+                            attempts - 1, len(self._settings.crm_retry_backoff) - 1
+                        )
+                        next_attempt = now + timedelta(
+                            seconds=self._settings.crm_retry_backoff[backoff_index]
+                        )
+                        error_text = error_message or "CRM send failed"
+                    else:
+                        next_attempt = None
+                        terminal_error = error_message or "CRM send failed"
+                        error_text = f"{terminal_error} (max attempts reached)"
                     crm_repo.update_crm_item_failure(
                         conn,
                         item_id=item.id,
                         attempts=attempts,
                         next_attempt_at=next_attempt,
                         response_code=response.status_code if response.status_code else None,
-                        error_message=error_message or "CRM send failed",
+                        error_message=error_text,
                     )
                     stats["failed"] += 1
-                    LOGGER.warning(
-                        f"CRM Sender: ✗ Failed to send payment_id={item.payment_id}, "
-                        f"operation={item.operation}, status={response.status_code}, "
-                        f"attempts={attempts}, next_retry={next_attempt.isoformat()}, "
-                        f"error={error_message}"
-                    )
+                    if should_retry:
+                        LOGGER.warning(
+                            f"CRM Sender: ✗ Failed to send payment_id={item.payment_id}, "
+                            f"operation={item.operation}, status={response.status_code}, "
+                            f"attempts={attempts}, next_retry={next_attempt.isoformat()}, "
+                            f"error={error_message}"
+                        )
+                    else:
+                        LOGGER.error(
+                            f"CRM Sender: ✗ Max attempts reached for payment_id={item.payment_id}, "
+                            f"operation={item.operation}, status={response.status_code}, "
+                            f"attempts={attempts}, error={terminal_error}"
+                        )
 
             self._emit_runtime_log(conn, stats)
             LOGGER.info(

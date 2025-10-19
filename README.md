@@ -237,6 +237,7 @@ Both background loops spawn automatically on startup. Logs are written to stdout
 | `CRM_BASE_URL` / `CRM_PAGAR_PATH` | — | CRM endpoint configuration. |
 | `CRM_AUTH_BEARER` | `None` | Optional bearer token for CRM calls. |
 | `CRM_RETRY_BACKOFF` | `60,300,1800` | Backoff schedule (seconds) for CRM retries. |
+| `CRM_MAX_ATTEMPTS` | `5` | Maximum number of CRM delivery attempts before the item is left in `FAILED`. |
 | `HEALTH_AUTH_BEARER` | `None` | When set, `/api/v1/health/metrics` requires `Authorization: Bearer <token>`. |
 | `STRIPE_API_KEY` / `STRIPE_API_BASE` | — | Stripe credentials and base URL. |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_BASE_URL` | — | PayPal configuration (OAuth + Orders API). |
@@ -300,7 +301,8 @@ The endpoint downgrades `status` to `degraded` when the database is unavailable 
 ## CRM Delivery Logic
 
 - Items in `payments.crm_push_queue` may be in one of three states: `PENDING`, `FAILED`, or `SENT`.
-- Failed items are automatically reactivated once their `next_attempt_at` is past due, with retries scheduled according to `CRM_RETRY_BACKOFF`.
+- Failed items are automatically reactivated once their `next_attempt_at` is past due, with retries scheduled according to `CRM_RETRY_BACKOFF` until `CRM_MAX_ATTEMPTS` is reached.
+- Once an item is marked `SENT`, additional enqueue requests for the same `(payment_id, operation)` are ignored to prevent duplicates.
 - Each HTTP interaction against the CRM is logged to `payments.crm_event_log` with full request/response context.
 - The CRM sender loop backfills `PAYMENT_APPROVED` notifications for any payments that are already `AUTHORIZED` even if the reconciler was not involved, and both reconciler-driven and timeout-driven `ABANDONED_CART` events are enqueued for delivery.
 

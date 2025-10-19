@@ -46,6 +46,7 @@ def enqueue_crm_operation(
                 last_error = NULL,
                 payload = EXCLUDED.payload,
                 updated_at = NOW()
+            WHERE payments.crm_push_queue.status <> 'SENT'
             """,
             (
                 payment_id,
@@ -96,6 +97,7 @@ def update_crm_item_success(
     conn,
     *,
     item_id: int,
+    attempts: int,
     response_code: int,
     crm_id: str | None,
 ) -> None:
@@ -104,13 +106,16 @@ def update_crm_item_success(
             """
             UPDATE payments.crm_push_queue
             SET status = 'SENT',
+                attempts = %s,
+                next_attempt_at = NULL,
+                last_attempt_at = NOW(),
                 response_code = %s,
                 crm_id = %s,
                 last_error = NULL,
                 updated_at = NOW()
             WHERE id = %s
             """,
-            (response_code, crm_id, item_id),
+            (attempts, response_code, crm_id, item_id),
         )
 
 
@@ -208,7 +213,7 @@ def record_crm_event(
 
 
 
-def reactivate_failed_items(conn, *, limit: int = 100) -> int:
+def reactivate_failed_items(conn, *, limit: int = 100, max_attempts: int) -> int:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -216,6 +221,7 @@ def reactivate_failed_items(conn, *, limit: int = 100) -> int:
                 SELECT id
                 FROM payments.crm_push_queue
                 WHERE status = 'FAILED'
+                  AND attempts < %s
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
                 ORDER BY next_attempt_at NULLS FIRST
                 FOR UPDATE SKIP LOCKED
@@ -227,6 +233,6 @@ def reactivate_failed_items(conn, *, limit: int = 100) -> int:
             WHERE q.id = moved.id
             RETURNING q.id
             """,
-            (limit,),
+            (max_attempts, limit),
         )
         return cur.rowcount

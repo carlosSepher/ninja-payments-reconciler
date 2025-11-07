@@ -8,7 +8,7 @@ from typing import Dict
 from ..db import Database
 from ..integrations.crm_client import CRMClient
 from ..repositories import crm_repo, payments_repo
-from ..services.crm_payloads import build_payload
+from ..services.crm_payloads import build_payload, can_notify_crm
 from ..settings import Settings
 
 LOGGER = logging.getLogger(__name__)
@@ -50,7 +50,17 @@ class CrmSender:
                 conn, limit=self._settings.reconcile_batch_size
             )
             if authorized_without_queue:
+                enqueued = 0
                 for payment in authorized_without_queue:
+                    if not can_notify_crm(payment):
+                        LOGGER.debug(
+                            "CRM Sender: Skipping CRM enqueue for payment_id=%s "
+                            "(notify_flag=%s, contract=%s)",
+                            payment.id,
+                            payment.should_notify_crm,
+                            payment.contract_number,
+                        )
+                        continue
                     payload = build_payload(payment, "PAYMENT_APPROVED")
                     crm_repo.enqueue_crm_operation(
                         conn,
@@ -58,7 +68,8 @@ class CrmSender:
                         operation="PAYMENT_APPROVED",
                         payload=payload,
                     )
-                stats["enqueued_authorized"] = len(authorized_without_queue)
+                    enqueued += 1
+                stats["enqueued_authorized"] = enqueued
                 LOGGER.info(
                     f"CRM Sender: Enqueued {stats['enqueued_authorized']} authorized payments"
                 )

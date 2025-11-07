@@ -25,6 +25,8 @@ class Payment:
     attempts: int
     payment_order_id: int | None
     order_customer_rut: str | None
+    should_notify_crm: bool
+    contract_number: int | None
 
 
 @dataclass(slots=True)
@@ -43,6 +45,16 @@ class PaymentsMetrics:
             "total_amount_currency": self.total_amount_currency,
             "last_payment_at": self.last_payment_at.isoformat() if self.last_payment_at else None,
         }
+
+
+def _normalize_contract_number(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def select_payments_for_reconciliation(
@@ -77,10 +89,13 @@ def select_payments_for_reconciliation(
                 p.status_reason,
                 COALESCE(pa.attempts, 0) AS attempts,
                 po.id AS payment_order_id,
-                po.customer_rut AS order_customer_rut
+                po.customer_rut AS order_customer_rut,
+                COALESCE(pc.notifica, false) AS should_notify_crm,
+                pc.contrato AS contract_number
             FROM payments.payment AS p
             LEFT JOIN payment_attempts pa ON pa.payment_id = p.id
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
+            LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
             WHERE p.status::text IN ('PENDING', 'TO_CONFIRM')
               AND p.token IS NOT NULL
               AND p.provider::text = ANY(%s::text[])
@@ -110,6 +125,8 @@ def select_payments_for_reconciliation(
                 attempts=row.get("attempts", 0),
                 payment_order_id=row.get("payment_order_id"),
                 order_customer_rut=row.get("order_customer_rut"),
+                should_notify_crm=row.get("should_notify_crm", False),
+                contract_number=_normalize_contract_number(row.get("contract_number")),
             )
         )
     return payments
@@ -140,9 +157,12 @@ def find_authorized_payments_without_crm(
                 p.authorization_code,
                 p.status_reason,
                 po.id AS payment_order_id,
-                po.customer_rut AS order_customer_rut
+                po.customer_rut AS order_customer_rut,
+                COALESCE(pc.notifica, false) AS should_notify_crm,
+                pc.contrato AS contract_number
             FROM payments.payment AS p
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
+            LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
             LEFT JOIN payments.crm_push_queue AS q
               ON q.payment_id = p.id
              AND q.operation = 'PAYMENT_APPROVED'
@@ -173,6 +193,8 @@ def find_authorized_payments_without_crm(
                 attempts=0,
                 payment_order_id=row.get("payment_order_id"),
                 order_customer_rut=row.get("order_customer_rut"),
+                should_notify_crm=row.get("should_notify_crm", False),
+                contract_number=_normalize_contract_number(row.get("contract_number")),
             )
         )
     return payments
@@ -388,10 +410,14 @@ def find_abandoned_payments(
                 p.status_reason,
                 0 AS attempts,
                 po.id AS payment_order_id,
-                po.customer_rut AS order_customer_rut
+                po.customer_rut AS order_customer_rut,
+                COALESCE(pc.notifica, false) AS should_notify_crm,
+                pc.contrato AS contract_number
             FROM payments.payment AS p
             LEFT JOIN payments.payment_order AS po
               ON po.id = p.payment_order_id
+            LEFT JOIN payments.payment_contract AS pc
+              ON pc.payment_id = p.id
             WHERE p.status::text = 'PENDING'
               AND p.created_at <= %s
             ORDER BY p.created_at ASC
@@ -418,6 +444,8 @@ def find_abandoned_payments(
             attempts=row.get("attempts", 0),
             payment_order_id=row.get("payment_order_id"),
             order_customer_rut=row.get("order_customer_rut"),
+            should_notify_crm=row.get("should_notify_crm", False),
+            contract_number=_normalize_contract_number(row.get("contract_number")),
         )
         for row in rows
     ]

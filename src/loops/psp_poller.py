@@ -8,7 +8,7 @@ from typing import Dict
 from ..db import Database
 from ..integrations.providers.base import ProviderClient
 from ..repositories import crm_repo, payments_repo
-from ..services.crm_payloads import build_payload
+from ..services.crm_payloads import build_payload, can_notify_crm
 from ..settings import Settings
 
 LOGGER = logging.getLogger(__name__)
@@ -72,16 +72,25 @@ class PspPoller:
                 attempt_index = payment.attempts
                 if attempt_index >= len(self._settings.reconcile_attempt_offsets):
                     payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
-                    payload = build_payload(payment, "ABANDONED_CART")
-                    crm_repo.enqueue_crm_operation(
-                        conn,
-                        payment_id=payment.id,
-                        operation="ABANDONED_CART",
-                        payload=payload,
-                    )
                     stats.setdefault("abandoned", 0)
                     stats["abandoned"] += 1
                     stats["failed"] += 1
+                    if can_notify_crm(payment):
+                        payload = build_payload(payment, "ABANDONED_CART")
+                        crm_repo.enqueue_crm_operation(
+                            conn,
+                            payment_id=payment.id,
+                            operation="ABANDONED_CART",
+                            payload=payload,
+                        )
+                    else:
+                        LOGGER.debug(
+                            "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
+                            "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                            payment.id,
+                            payment.should_notify_crm,
+                            payment.contract_number,
+                        )
                     LOGGER.warning(
                         f"PSP Poller: Attempts exhausted for payment_id={payment.id}, "
                         f"provider={payment.provider}, attempts={attempt_index}"
@@ -143,16 +152,25 @@ class PspPoller:
                 if result.mapped_status is None:
                     if attempt_index + 1 >= len(self._settings.reconcile_attempt_offsets):
                         payments_repo.mark_attempts_exhausted(conn, payment_id=payment.id)
-                        payload = build_payload(payment, "ABANDONED_CART")
-                        crm_repo.enqueue_crm_operation(
-                            conn,
-                            payment_id=payment.id,
-                            operation="ABANDONED_CART",
-                            payload=payload,
-                        )
                         stats.setdefault("abandoned", 0)
                         stats["abandoned"] += 1
                         stats["failed"] += 1
+                        if can_notify_crm(payment):
+                            payload = build_payload(payment, "ABANDONED_CART")
+                            crm_repo.enqueue_crm_operation(
+                                conn,
+                                payment_id=payment.id,
+                                operation="ABANDONED_CART",
+                                payload=payload,
+                            )
+                        else:
+                            LOGGER.debug(
+                                "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
+                                "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                                payment.id,
+                                payment.should_notify_crm,
+                                payment.contract_number,
+                            )
                         LOGGER.warning(
                             f"PSP Poller: No mapped status and attempts exhausted for "
                             f"payment_id={payment.id}, provider_status={result.provider_status}"
@@ -189,17 +207,26 @@ class PspPoller:
                 )
 
                 if result.mapped_status == "AUTHORIZED":
-                    payload = build_payload(payment, "PAYMENT_APPROVED")
-                    crm_repo.enqueue_crm_operation(
-                        conn,
-                        payment_id=payment.id,
-                        operation="PAYMENT_APPROVED",
-                        payload=payload,
-                    )
-                    LOGGER.info(
-                        f"PSP Poller: Enqueued CRM notification for payment_id={payment.id}, "
-                        f"operation=PAYMENT_APPROVED"
-                    )
+                    if can_notify_crm(payment):
+                        payload = build_payload(payment, "PAYMENT_APPROVED")
+                        crm_repo.enqueue_crm_operation(
+                            conn,
+                            payment_id=payment.id,
+                            operation="PAYMENT_APPROVED",
+                            payload=payload,
+                        )
+                        LOGGER.info(
+                            f"PSP Poller: Enqueued CRM notification for payment_id={payment.id}, "
+                            f"operation=PAYMENT_APPROVED"
+                        )
+                    else:
+                        LOGGER.debug(
+                            "PSP Poller: Skipping CRM notification for payment_id=%s "
+                            "(operation=PAYMENT_APPROVED, notify_flag=%s, contract=%s)",
+                            payment.id,
+                            payment.should_notify_crm,
+                            payment.contract_number,
+                        )
 
             cutoff = now - timedelta(minutes=self._settings.abandoned_timeout_minutes)
             abandoned_payments = payments_repo.find_abandoned_payments(
@@ -216,19 +243,28 @@ class PspPoller:
                     new_status="ABANDONED",
                     status_reason="abandoned timeout",
                 )
-                payload = build_payload(abandoned, "ABANDONED_CART")
-                crm_repo.enqueue_crm_operation(
-                    conn,
-                    payment_id=abandoned.id,
-                    operation="ABANDONED_CART",
-                    payload=payload,
-                )
                 stats.setdefault("abandoned", 0)
                 stats["abandoned"] += 1
-                LOGGER.info(
-                    f"PSP Poller: Marked payment_id={abandoned.id} as ABANDONED, "
-                    f"enqueued CRM notification"
-                )
+                if can_notify_crm(abandoned):
+                    payload = build_payload(abandoned, "ABANDONED_CART")
+                    crm_repo.enqueue_crm_operation(
+                        conn,
+                        payment_id=abandoned.id,
+                        operation="ABANDONED_CART",
+                        payload=payload,
+                    )
+                    LOGGER.info(
+                        f"PSP Poller: Marked payment_id={abandoned.id} as ABANDONED, "
+                        f"enqueued CRM notification"
+                    )
+                else:
+                    LOGGER.debug(
+                        "PSP Poller: Marked payment_id=%s as ABANDONED without CRM notification "
+                        "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                        abandoned.id,
+                        abandoned.should_notify_crm,
+                        abandoned.contract_number,
+                    )
 
             self._emit_runtime_log(conn, stats)
             LOGGER.info(

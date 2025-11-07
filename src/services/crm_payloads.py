@@ -80,6 +80,10 @@ def _resolve_amount(payment: Payment) -> Any:
     return payment.amount_minor
 
 
+def can_notify_crm(payment: Payment) -> bool:
+    return bool(payment.should_notify_crm and payment.contract_number is not None)
+
+
 def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     context = payment.context or {}
     provider_metadata = payment.provider_metadata or {}
@@ -104,6 +108,9 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     )
     amount_value = _resolve_amount(payment)
     amount_str = _truncate_amount_to_str(amount_value)
+    contract_list = (
+        [payment.contract_number] if payment.contract_number is not None else None
+    )
 
     payload: Dict[str, Any] = {
         "rutDepositante": rut,
@@ -111,7 +118,7 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         "paymentMethod": payment.provider,
         "transactionId": str(transaction_id) if transaction_id is not None else None,
         "monto": amount_str,
-        "listContrato": [1],
+        "listContrato": contract_list,
         "listCuota": None,
     }
     return payload

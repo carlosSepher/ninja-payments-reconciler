@@ -27,21 +27,30 @@ class CRMClient:
         bearer_token: str | None,
         timeout_seconds: int,
         log_requests: bool = True,
+        contract_endpoint: str | None = None,
+        quota_endpoint: str | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.pagar_path = pagar_path
         self.bearer_token = bearer_token
         self.timeout_seconds = timeout_seconds
         self.log_requests = log_requests
+        default_endpoint = f"{self.base_url}{self.pagar_path}"
+        self.contract_endpoint = (contract_endpoint or "").strip() or default_endpoint
+        quota_override = (quota_endpoint or "").strip()
+        self.quota_endpoint = quota_override or self.contract_endpoint
 
     @property
     def endpoint(self) -> str:
-        return f"{self.base_url}{self.pagar_path}"
+        return self.contract_endpoint
 
     def send(
-        self, payload: Dict[str, Any]
+        self,
+        payload: Dict[str, Any],
+        *,
+        endpoint: str | None = None,
     ) -> tuple[CrmResponse, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], str | None]:
-        url = self.endpoint
+        url = (endpoint or "").strip() or self.contract_endpoint
         headers: Dict[str, str] = {"Content-Type": "application/json"}
         if self.bearer_token:
             headers["Authorization"] = f"Bearer {self.bearer_token}"

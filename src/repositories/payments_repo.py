@@ -27,6 +27,10 @@ class Payment:
     order_customer_rut: str | None
     should_notify_crm: bool
     contract_number: int | None
+    payment_type: str
+    quota_numbers: tuple[int, ...]
+    deposit_name: str | None
+    deposit_rut: str | None
 
 
 @dataclass(slots=True)
@@ -55,6 +59,38 @@ def _normalize_contract_number(value: Any) -> int | None:
     except (ArithmeticError, TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _normalize_payment_type(value: Any) -> str:
+    if not value:
+        return "contrato"
+    normalized = str(value).strip().lower()
+    return normalized if normalized in {"contrato", "cuota"} else "contrato"
+
+
+def _normalize_quota_numbers(value: Any) -> tuple[int, ...]:
+    if not value:
+        return tuple()
+    numbers: list[int] = []
+    if isinstance(value, (list, tuple, set)):
+        iterable = value
+    else:
+        iterable = str(value).strip("{}").split(",")
+    for item in iterable:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            numbers.append(number)
+    return tuple(numbers)
+
+
+def _clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def select_payments_for_reconciliation(
@@ -91,11 +127,16 @@ def select_payments_for_reconciliation(
                 po.id AS payment_order_id,
                 po.customer_rut AS order_customer_rut,
                 COALESCE(pc.notifica, false) AS should_notify_crm,
-                pc.contrato AS contract_number
+                pc.contrato AS contract_number,
+                pc.cuotas AS quota_numbers,
+                pc.tipo_pago AS payment_type,
+                pdi.nombre_depositante AS deposit_name,
+                pdi.rut_depositante AS deposit_rut
             FROM payments.payment AS p
             LEFT JOIN payment_attempts pa ON pa.payment_id = p.id
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
             LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
+            LEFT JOIN payments.payment_deposit_info AS pdi ON pdi.payment_id = p.id
             WHERE p.status::text IN ('PENDING', 'TO_CONFIRM')
               AND p.token IS NOT NULL
               AND p.provider::text = ANY(%s::text[])
@@ -127,6 +168,10 @@ def select_payments_for_reconciliation(
                 order_customer_rut=row.get("order_customer_rut"),
                 should_notify_crm=row.get("should_notify_crm", False),
                 contract_number=_normalize_contract_number(row.get("contract_number")),
+                payment_type=_normalize_payment_type(row.get("payment_type")),
+                quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
+                deposit_name=_clean_text(row.get("deposit_name")),
+                deposit_rut=_clean_text(row.get("deposit_rut")),
             )
         )
     return payments
@@ -159,10 +204,15 @@ def find_authorized_payments_without_crm(
                 po.id AS payment_order_id,
                 po.customer_rut AS order_customer_rut,
                 COALESCE(pc.notifica, false) AS should_notify_crm,
-                pc.contrato AS contract_number
+                pc.contrato AS contract_number,
+                pc.cuotas AS quota_numbers,
+                pc.tipo_pago AS payment_type,
+                pdi.nombre_depositante AS deposit_name,
+                pdi.rut_depositante AS deposit_rut
             FROM payments.payment AS p
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
             LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
+            LEFT JOIN payments.payment_deposit_info AS pdi ON pdi.payment_id = p.id
             LEFT JOIN payments.crm_push_queue AS q
               ON q.payment_id = p.id
              AND q.operation = 'PAYMENT_APPROVED'
@@ -195,6 +245,10 @@ def find_authorized_payments_without_crm(
                 order_customer_rut=row.get("order_customer_rut"),
                 should_notify_crm=row.get("should_notify_crm", False),
                 contract_number=_normalize_contract_number(row.get("contract_number")),
+                payment_type=_normalize_payment_type(row.get("payment_type")),
+                quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
+                deposit_name=_clean_text(row.get("deposit_name")),
+                deposit_rut=_clean_text(row.get("deposit_rut")),
             )
         )
     return payments
@@ -412,12 +466,18 @@ def find_abandoned_payments(
                 po.id AS payment_order_id,
                 po.customer_rut AS order_customer_rut,
                 COALESCE(pc.notifica, false) AS should_notify_crm,
-                pc.contrato AS contract_number
+                pc.contrato AS contract_number,
+                pc.cuotas AS quota_numbers,
+                pc.tipo_pago AS payment_type,
+                pdi.nombre_depositante AS deposit_name,
+                pdi.rut_depositante AS deposit_rut
             FROM payments.payment AS p
             LEFT JOIN payments.payment_order AS po
               ON po.id = p.payment_order_id
             LEFT JOIN payments.payment_contract AS pc
               ON pc.payment_id = p.id
+            LEFT JOIN payments.payment_deposit_info AS pdi
+              ON pdi.payment_id = p.id
             WHERE p.status::text = 'PENDING'
               AND p.created_at <= %s
             ORDER BY p.created_at ASC
@@ -446,6 +506,10 @@ def find_abandoned_payments(
             order_customer_rut=row.get("order_customer_rut"),
             should_notify_crm=row.get("should_notify_crm", False),
             contract_number=_normalize_contract_number(row.get("contract_number")),
+            payment_type=_normalize_payment_type(row.get("payment_type")),
+            quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
+            deposit_name=_clean_text(row.get("deposit_name")),
+            deposit_rut=_clean_text(row.get("deposit_rut")),
         )
         for row in rows
     ]

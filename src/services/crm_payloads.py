@@ -81,25 +81,27 @@ def _resolve_amount(payment: Payment) -> Any:
 
 
 def can_notify_crm(payment: Payment) -> bool:
-    return bool(payment.should_notify_crm and payment.contract_number is not None)
+    if not payment.should_notify_crm:
+        return False
+    if payment.payment_type == "cuota":
+        return bool(payment.quota_numbers)
+    return payment.contract_number is not None
 
 
 def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     context = payment.context or {}
     provider_metadata = payment.provider_metadata or {}
 
-    rut = (
-        payment.order_customer_rut
-        or _extract_from_dict(context, "customer_rut")
-        or _extract_from_dict(provider_metadata, "rut")
-    )
+    rut = payment.deposit_rut or payment.order_customer_rut
+    if rut is None:
+        rut = _extract_from_dict(context, "customer_rut") or _extract_from_dict(
+            provider_metadata, "rut"
+        )
     rut = _sanitize_rut(rut)
 
-    name = (
-        _extract_from_dict(context, "customer_name")
-        or _extract_from_dict(provider_metadata, "name")
-        or payment.provider
-    )
+    name = payment.deposit_name or _extract_from_dict(context, "customer_name")
+    if name is None:
+        name = _extract_from_dict(provider_metadata, "name") or payment.provider
     transaction_id = (
         payment.payment_order_id
         or payment.authorization_code
@@ -108,9 +110,15 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     )
     amount_value = _resolve_amount(payment)
     amount_str = _truncate_amount_to_str(amount_value)
-    contract_list = (
-        [payment.contract_number] if payment.contract_number is not None else None
-    )
+    is_quota_payment = payment.payment_type == "cuota"
+    contract_list = None
+    quota_list = None
+    if is_quota_payment:
+        if payment.quota_numbers:
+            quota_list = list(payment.quota_numbers)
+    else:
+        if payment.contract_number is not None:
+            contract_list = [payment.contract_number]
 
     payload: Dict[str, Any] = {
         "rutDepositante": rut,
@@ -119,6 +127,6 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         "transactionId": str(transaction_id) if transaction_id is not None else None,
         "monto": amount_str,
         "listContrato": contract_list,
-        "listCuota": None,
+        "listCuota": quota_list,
     }
     return payload

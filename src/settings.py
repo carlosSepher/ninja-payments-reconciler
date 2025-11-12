@@ -48,6 +48,13 @@ class Settings(BaseSettings):
         alias="CRM_BASE_URL",
     )
     crm_pagar_path: str = Field(default="/pagar", alias="CRM_PAGAR_PATH")
+    crm_contract_endpoint: str | None = Field(
+        default=None, alias="CRM_CONTRACT_ENDPOINT"
+    )
+    crm_quota_endpoint: str | None = Field(
+        default="http://emprende-crm-prod-b0043c05a756b148.elb.us-east-1.amazonaws.com:8980/unify/inyeccion/contrato/pagar",
+        alias="CRM_QUOTA_ENDPOINT",
+    )
     crm_auth_bearer: str | None = Field(default=None, alias="CRM_AUTH_BEARER")
     crm_timeout_seconds: int = Field(default=10, alias="CRM_TIMEOUT_SECONDS")
     crm_retry_backoff_raw: str | List[int] | None = Field(

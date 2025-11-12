@@ -190,6 +190,15 @@ WEBPAY_API_KEY_SECRET=...
 HEALTH_AUTH_BEARER=replace-me
 ```
 
+For CRM delivery you can override the dedicated endpoints per payment type:
+
+```dotenv
+CRM_CONTRACT_ENDPOINT=http://emprende-crm-prod-b0043c05a756b148.elb.us-east-1.amazonaws.com:8980/unify/inyeccion/contrato/v2/pagar
+CRM_QUOTA_ENDPOINT=http://emprende-crm-prod-b0043c05a756b148.elb.us-east-1.amazonaws.com:8980/unify/inyeccion/contrato/pagar
+```
+
+`CRM_CONTRACT_ENDPOINT` falls back to `CRM_BASE_URL + CRM_PAGAR_PATH` when unset, while `CRM_QUOTA_ENDPOINT` defaults to the value shown above.
+
 ### Running the Service
 
 ```bash

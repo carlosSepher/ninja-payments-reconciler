@@ -55,10 +55,12 @@ class CrmSender:
                     if not can_notify_crm(payment):
                         LOGGER.debug(
                             "CRM Sender: Skipping CRM enqueue for payment_id=%s "
-                            "(notify_flag=%s, contract=%s)",
+                            "(notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
                             payment.id,
                             payment.should_notify_crm,
                             payment.contract_number,
+                            payment.payment_type,
+                            payment.quota_numbers,
                         )
                         continue
                     payload = build_payload(payment, "PAYMENT_APPROVED")
@@ -95,16 +97,22 @@ class CrmSender:
                     f"operation={item.operation}, attempt={item.attempts + 1}"
                 )
 
-                response, req_headers, req_body, resp_headers, resp_body, error_message = self._client.send(
-                    item.payload
-                )
+                target_endpoint = self._resolve_endpoint(item.payload)
+                (
+                    response,
+                    req_headers,
+                    req_body,
+                    resp_headers,
+                    resp_body,
+                    error_message,
+                ) = self._client.send(item.payload, endpoint=target_endpoint)
 
                 attempts = item.attempts + 1
                 crm_repo.record_crm_event(
                     conn,
                     payment_id=item.payment_id,
                     operation=item.operation,
-                    request_url=self._client.endpoint,
+                    request_url=target_endpoint,
                     request_headers=req_headers,
                     request_body=req_body,
                     response_status=response.status_code,
@@ -126,7 +134,7 @@ class CrmSender:
                     LOGGER.info(
                         f"CRM Sender: ✓ Successfully sent payment_id={item.payment_id}, "
                         f"operation={item.operation}, status={response.status_code}, "
-                        f"crm_id={response.crm_id}"
+                        f"crm_id={response.crm_id}, endpoint={target_endpoint}"
                     )
                 else:
                     should_retry = attempts < max_attempts
@@ -156,13 +164,13 @@ class CrmSender:
                             f"CRM Sender: ✗ Failed to send payment_id={item.payment_id}, "
                             f"operation={item.operation}, status={response.status_code}, "
                             f"attempts={attempts}, next_retry={next_attempt.isoformat()}, "
-                            f"error={error_message}"
+                            f"endpoint={target_endpoint}, error={error_message}"
                         )
                     else:
                         LOGGER.error(
                             f"CRM Sender: ✗ Max attempts reached for payment_id={item.payment_id}, "
                             f"operation={item.operation}, status={response.status_code}, "
-                            f"attempts={attempts}, error={terminal_error}"
+                            f"attempts={attempts}, endpoint={target_endpoint}, error={terminal_error}"
                         )
 
             self._emit_runtime_log(conn, stats)
@@ -183,3 +191,8 @@ class CrmSender:
             payload={"crm_sender": stats},
         )
         LOGGER.debug(f"CRM Sender: Heartbeat recorded - {stats}")
+
+    def _resolve_endpoint(self, payload: Dict[str, Any]) -> str:
+        if isinstance(payload, dict) and payload.get("listCuota") is not None:
+            return self._client.quota_endpoint
+        return self._client.contract_endpoint

@@ -86,10 +86,12 @@ class PspPoller:
                     else:
                         LOGGER.debug(
                             "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
-                            "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                            "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
                             payment.id,
                             payment.should_notify_crm,
                             payment.contract_number,
+                            payment.payment_type,
+                            payment.quota_numbers,
                         )
                     LOGGER.warning(
                         f"PSP Poller: Attempts exhausted for payment_id={payment.id}, "
@@ -166,10 +168,12 @@ class PspPoller:
                         else:
                             LOGGER.debug(
                                 "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
-                                "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                                "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
                                 payment.id,
                                 payment.should_notify_crm,
                                 payment.contract_number,
+                                payment.payment_type,
+                                payment.quota_numbers,
                             )
                         LOGGER.warning(
                             f"PSP Poller: No mapped status and attempts exhausted for "
@@ -222,10 +226,12 @@ class PspPoller:
                     else:
                         LOGGER.debug(
                             "PSP Poller: Skipping CRM notification for payment_id=%s "
-                            "(operation=PAYMENT_APPROVED, notify_flag=%s, contract=%s)",
+                            "(operation=PAYMENT_APPROVED, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
                             payment.id,
                             payment.should_notify_crm,
                             payment.contract_number,
+                            payment.payment_type,
+                            payment.quota_numbers,
                         )
 
             cutoff = now - timedelta(minutes=self._settings.abandoned_timeout_minutes)
@@ -260,10 +266,12 @@ class PspPoller:
                 else:
                     LOGGER.debug(
                         "PSP Poller: Marked payment_id=%s as ABANDONED without CRM notification "
-                        "(operation=ABANDONED_CART, notify_flag=%s, contract=%s)",
+                        "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
                         abandoned.id,
                         abandoned.should_notify_crm,
                         abandoned.contract_number,
+                        abandoned.payment_type,
+                        abandoned.quota_numbers,
                     )
 
             self._emit_runtime_log(conn, stats)

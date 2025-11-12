@@ -82,8 +82,11 @@ def create_app() -> FastAPI:
         bearer_token=settings.crm_auth_bearer,
         timeout_seconds=settings.crm_timeout_seconds,
         log_requests=settings.crm_log_requests,
+        contract_endpoint=settings.crm_contract_endpoint,
+        quota_endpoint=settings.crm_quota_endpoint,
     )
-    LOGGER.info(f"CRM endpoint: {crm_client.endpoint}")
+    LOGGER.info(f"CRM contract endpoint: {crm_client.contract_endpoint}")
+    LOGGER.info(f"CRM quota endpoint: {crm_client.quota_endpoint}")
 
     app = FastAPI(title=settings.app_name, docs_url=None, redoc_url=None, openapi_url=None)
 

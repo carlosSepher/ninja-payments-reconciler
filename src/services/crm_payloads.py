@@ -70,6 +70,9 @@ def _find_amount_in_payload(data: Any) -> Any:
 
 
 def _resolve_amount(payment: Payment) -> Any:
+    currency = (payment.currency or "CLP").upper()
+    if currency != "CLP" and payment.aux_amount_minor is not None:
+        return payment.aux_amount_minor
     if _is_non_zero_numeric(payment.amount_minor):
         return payment.amount_minor
 
@@ -82,6 +85,9 @@ def _resolve_amount(payment: Payment) -> Any:
 
 def can_notify_crm(payment: Payment) -> bool:
     if not payment.should_notify_crm:
+        return False
+    currency = (payment.currency or "CLP").upper()
+    if currency != "CLP" and payment.aux_amount_minor is None:
         return False
     if payment.payment_type == "cuota":
         return bool(payment.quota_numbers)

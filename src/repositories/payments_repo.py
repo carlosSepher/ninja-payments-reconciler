@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, List, Sequence
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import psycopg2.extras
 
@@ -31,6 +31,8 @@ class Payment:
     quota_numbers: tuple[int, ...]
     deposit_name: str | None
     deposit_rut: str | None
+    currency: str | None
+    aux_amount_minor: Decimal | None
 
 
 @dataclass(slots=True)
@@ -93,6 +95,22 @@ def _clean_text(value: Any) -> str | None:
     return text or None
 
 
+def _normalize_currency(value: Any) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip().upper()
+    return text or None
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+
 def select_payments_for_reconciliation(
     conn,
     *,
@@ -131,12 +149,15 @@ def select_payments_for_reconciliation(
                 pc.cuotas AS quota_numbers,
                 pc.tipo_pago AS payment_type,
                 pdi.nombre_depositante AS deposit_name,
-                pdi.rut_depositante AS deposit_rut
+                pdi.rut_depositante AS deposit_rut,
+                p.currency::text AS currency,
+                paa.auxiliar_amount AS aux_amount_minor
             FROM payments.payment AS p
             LEFT JOIN payment_attempts pa ON pa.payment_id = p.id
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
             LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
             LEFT JOIN payments.payment_deposit_info AS pdi ON pdi.payment_id = p.id
+            LEFT JOIN payments.payment_aux_amount AS paa ON paa.payment_id = p.id
             WHERE p.status::text IN ('PENDING', 'TO_CONFIRM')
               AND p.token IS NOT NULL
               AND p.provider::text = ANY(%s::text[])
@@ -172,6 +193,8 @@ def select_payments_for_reconciliation(
                 quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
                 deposit_name=_clean_text(row.get("deposit_name")),
                 deposit_rut=_clean_text(row.get("deposit_rut")),
+                currency=_normalize_currency(row.get("currency")),
+                aux_amount_minor=_decimal_or_none(row.get("aux_amount_minor")),
             )
         )
     return payments
@@ -208,11 +231,14 @@ def find_authorized_payments_without_crm(
                 pc.cuotas AS quota_numbers,
                 pc.tipo_pago AS payment_type,
                 pdi.nombre_depositante AS deposit_name,
-                pdi.rut_depositante AS deposit_rut
+                pdi.rut_depositante AS deposit_rut,
+                p.currency::text AS currency,
+                paa.auxiliar_amount AS aux_amount_minor
             FROM payments.payment AS p
             LEFT JOIN payment_orders po ON po.id = p.payment_order_id
             LEFT JOIN payments.payment_contract AS pc ON pc.payment_id = p.id
             LEFT JOIN payments.payment_deposit_info AS pdi ON pdi.payment_id = p.id
+            LEFT JOIN payments.payment_aux_amount AS paa ON paa.payment_id = p.id
             LEFT JOIN payments.crm_push_queue AS q
               ON q.payment_id = p.id
              AND q.operation = 'PAYMENT_APPROVED'
@@ -249,6 +275,8 @@ def find_authorized_payments_without_crm(
                 quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
                 deposit_name=_clean_text(row.get("deposit_name")),
                 deposit_rut=_clean_text(row.get("deposit_rut")),
+                currency=_normalize_currency(row.get("currency")),
+                aux_amount_minor=_decimal_or_none(row.get("aux_amount_minor")),
             )
         )
     return payments
@@ -470,7 +498,9 @@ def find_abandoned_payments(
                 pc.cuotas AS quota_numbers,
                 pc.tipo_pago AS payment_type,
                 pdi.nombre_depositante AS deposit_name,
-                pdi.rut_depositante AS deposit_rut
+                pdi.rut_depositante AS deposit_rut,
+                p.currency::text AS currency,
+                paa.auxiliar_amount AS aux_amount_minor
             FROM payments.payment AS p
             LEFT JOIN payments.payment_order AS po
               ON po.id = p.payment_order_id
@@ -478,6 +508,8 @@ def find_abandoned_payments(
               ON pc.payment_id = p.id
             LEFT JOIN payments.payment_deposit_info AS pdi
               ON pdi.payment_id = p.id
+            LEFT JOIN payments.payment_aux_amount AS paa
+              ON paa.payment_id = p.id
             WHERE p.status::text = 'PENDING'
               AND p.created_at <= %s
             ORDER BY p.created_at ASC
@@ -510,6 +542,8 @@ def find_abandoned_payments(
             quota_numbers=_normalize_quota_numbers(row.get("quota_numbers")),
             deposit_name=_clean_text(row.get("deposit_name")),
             deposit_rut=_clean_text(row.get("deposit_rut")),
+            currency=_normalize_currency(row.get("currency")),
+            aux_amount_minor=_decimal_or_none(row.get("aux_amount_minor")),
         )
         for row in rows
     ]

@@ -55,12 +55,14 @@ class CrmSender:
                     if not can_notify_crm(payment):
                         LOGGER.debug(
                             "CRM Sender: Skipping CRM enqueue for payment_id=%s "
-                            "(notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s)",
+                            "(notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s, currency=%s, aux_amount=%s)",
                             payment.id,
                             payment.should_notify_crm,
                             payment.contract_number,
                             payment.payment_type,
                             payment.quota_numbers,
+                            payment.currency,
+                            payment.aux_amount_minor,
                         )
                         continue
                     payload = build_payload(payment, "PAYMENT_APPROVED")

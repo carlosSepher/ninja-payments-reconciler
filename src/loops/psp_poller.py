@@ -75,26 +75,6 @@ class PspPoller:
                     stats.setdefault("abandoned", 0)
                     stats["abandoned"] += 1
                     stats["failed"] += 1
-                    if can_notify_crm(payment):
-                        payload = build_payload(payment, "ABANDONED_CART")
-                        crm_repo.enqueue_crm_operation(
-                            conn,
-                            payment_id=payment.id,
-                            operation="ABANDONED_CART",
-                            payload=payload,
-                        )
-                    else:
-                        LOGGER.debug(
-                            "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
-                            "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s, currency=%s, aux_amount=%s)",
-                            payment.id,
-                            payment.should_notify_crm,
-                            payment.contract_number,
-                            payment.payment_type,
-                            payment.quota_numbers,
-                            payment.currency,
-                            payment.aux_amount_minor,
-                        )
                     LOGGER.warning(
                         f"PSP Poller: Attempts exhausted for payment_id={payment.id}, "
                         f"provider={payment.provider}, attempts={attempt_index}"
@@ -159,26 +139,6 @@ class PspPoller:
                         stats.setdefault("abandoned", 0)
                         stats["abandoned"] += 1
                         stats["failed"] += 1
-                        if can_notify_crm(payment):
-                            payload = build_payload(payment, "ABANDONED_CART")
-                            crm_repo.enqueue_crm_operation(
-                                conn,
-                                payment_id=payment.id,
-                                operation="ABANDONED_CART",
-                                payload=payload,
-                            )
-                        else:
-                            LOGGER.debug(
-                                "PSP Poller: Not enqueuing CRM notification for payment_id=%s "
-                                "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s, currency=%s, aux_amount=%s)",
-                                payment.id,
-                                payment.should_notify_crm,
-                                payment.contract_number,
-                                payment.payment_type,
-                                payment.quota_numbers,
-                                payment.currency,
-                                payment.aux_amount_minor,
-                            )
                         LOGGER.warning(
                             f"PSP Poller: No mapped status and attempts exhausted for "
                             f"payment_id={payment.id}, provider_status={result.provider_status}"
@@ -257,30 +217,9 @@ class PspPoller:
                 )
                 stats.setdefault("abandoned", 0)
                 stats["abandoned"] += 1
-                if can_notify_crm(abandoned):
-                    payload = build_payload(abandoned, "ABANDONED_CART")
-                    crm_repo.enqueue_crm_operation(
-                        conn,
-                        payment_id=abandoned.id,
-                        operation="ABANDONED_CART",
-                        payload=payload,
-                    )
-                    LOGGER.info(
-                        f"PSP Poller: Marked payment_id={abandoned.id} as ABANDONED, "
-                        f"enqueued CRM notification"
-                    )
-                else:
-                    LOGGER.debug(
-                        "PSP Poller: Marked payment_id=%s as ABANDONED without CRM notification "
-                        "(operation=ABANDONED_CART, notify_flag=%s, contract=%s, tipo_pago=%s, cuotas=%s, currency=%s, aux_amount=%s)",
-                        abandoned.id,
-                        abandoned.should_notify_crm,
-                        abandoned.contract_number,
-                        abandoned.payment_type,
-                        abandoned.quota_numbers,
-                        abandoned.currency,
-                        abandoned.aux_amount_minor,
-                    )
+                LOGGER.info(
+                    f"PSP Poller: Marked payment_id={abandoned.id} as ABANDONED without CRM notification"
+                )
 
             self._emit_runtime_log(conn, stats)
             LOGGER.info(

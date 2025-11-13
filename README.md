@@ -313,7 +313,7 @@ The endpoint downgrades `status` to `degraded` when the database is unavailable 
 - Failed items are automatically reactivated once their `next_attempt_at` is past due, with retries scheduled according to `CRM_RETRY_BACKOFF` until `CRM_MAX_ATTEMPTS` is reached.
 - Once an item is marked `SENT`, additional enqueue requests for the same `(payment_id, operation)` are ignored to prevent duplicates.
 - Each HTTP interaction against the CRM is logged to `payments.crm_event_log` with full request/response context.
-- The CRM sender loop backfills `PAYMENT_APPROVED` notifications for any payments that are already `AUTHORIZED` even if the reconciler was not involved, and both reconciler-driven and timeout-driven `ABANDONED_CART` events are enqueued for delivery.
+- The CRM sender loop backfills `PAYMENT_APPROVED` notifications for any payments that are already `AUTHORIZED` even if the reconciler was not involved, and CRM notifications are only emitted for `AUTHORIZED` statuses (abandoned flows update payment state without contacting the CRM).
 
 ## Development & Testing
 

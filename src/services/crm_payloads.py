@@ -108,12 +108,6 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
     name = payment.deposit_name or _extract_from_dict(context, "customer_name")
     if name is None:
         name = _extract_from_dict(provider_metadata, "name") or payment.provider
-    transaction_id = (
-        payment.payment_order_id
-        or payment.authorization_code
-        or payment.token
-        or payment.id
-    )
     amount_value = _resolve_amount(payment)
     amount_str = _truncate_amount_to_str(amount_value)
     is_quota_payment = payment.payment_type == "cuota"
@@ -130,7 +124,7 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         "rutDepositante": rut,
         "nombreDepositante": name,
         "paymentMethod": payment.provider,
-        "transactionId": str(transaction_id) if transaction_id is not None else None,
+        "transactionId": None,
         "monto": amount_str,
         "listContrato": contract_list,
         "listCuota": quota_list,

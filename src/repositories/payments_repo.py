@@ -67,7 +67,11 @@ def _normalize_payment_type(value: Any) -> str:
     if not value:
         return "contrato"
     normalized = str(value).strip().lower()
-    return normalized if normalized in {"contrato", "cuota"} else "contrato"
+    if normalized == "cuota":
+        return "cuotas"
+    if normalized in {"contrato", "cuotas"}:
+        return normalized
+    return normalized
 
 
 def _normalize_quota_numbers(value: Any) -> tuple[int, ...]:

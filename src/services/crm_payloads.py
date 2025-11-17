@@ -89,7 +89,9 @@ def can_notify_crm(payment: Payment) -> bool:
     currency = (payment.currency or "CLP").upper()
     if currency != "CLP" and payment.aux_amount_minor is None:
         return False
-    if payment.payment_type == "cuota":
+    if payment.payment_type not in {"contrato", "cuotas"}:
+        return False
+    if payment.payment_type == "cuotas":
         return bool(payment.quota_numbers)
     return payment.contract_number is not None
 
@@ -110,7 +112,7 @@ def build_payload(payment: Payment, operation: str) -> Dict[str, Any]:
         name = _extract_from_dict(provider_metadata, "name") or payment.provider
     amount_value = _resolve_amount(payment)
     amount_str = _truncate_amount_to_str(amount_value)
-    is_quota_payment = payment.payment_type == "cuota"
+    is_quota_payment = payment.payment_type == "cuotas"
     contract_list = None
     quota_list = None
     if is_quota_payment:

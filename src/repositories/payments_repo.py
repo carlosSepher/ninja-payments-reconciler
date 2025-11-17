@@ -247,6 +247,18 @@ def find_authorized_payments_without_crm(
               ON q.payment_id = p.id
              AND q.operation = 'PAYMENT_APPROVED'
             WHERE p.status::text = 'AUTHORIZED'
+              AND COALESCE(pc.notifica, false)
+              AND (
+                    (LOWER(TRIM(pc.tipo_pago::text)) = 'contrato' AND pc.contrato IS NOT NULL)
+                 OR (
+                        LOWER(TRIM(pc.tipo_pago::text)) IN ('cuota', 'cuotas')
+                    AND pc.cuotas IS NOT NULL
+                    )
+              )
+              AND (
+                    UPPER(COALESCE(p.currency::text, 'CLP')) = 'CLP'
+                 OR paa.auxiliar_amount IS NOT NULL
+              )
               AND q.id IS NULL
             ORDER BY p.created_at ASC
             LIMIT %s
